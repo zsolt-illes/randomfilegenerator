@@ -8,6 +8,7 @@ param
     [parameter(mandatory=$true)][string]$DestinationFolder,
     [parameter(mandatory=$false)][switch]$CreateFoldersForFiles,
     [parameter(mandatory=$true)][string]$FilePrefix,
+	[parameter(mandatory=$false)][switch]$NoProgressBar,
     [parameter(mandatory=$false)][int]$_5kFiles,
     [parameter(mandatory=$false)][int]$_10kFiles,
     [parameter(mandatory=$false)][int]$_20kFiles,
@@ -27,8 +28,8 @@ param
     [parameter(mandatory=$false)][int]$_1GBFiles,
     [parameter(mandatory=$false)][int]$CustomSize,
     [parameter(mandatory=$false)][int]$CustomCount,
-    [parameter(mandatory=$false)][switch]$NoGUIDs,
-    [parameter(mandatory=$false)][switch]$NoProgressBar
+    [parameter(mandatory=$false)][switch]$NoGUIDs
+    
 )
 
 # A little math...
