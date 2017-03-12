@@ -32,7 +32,9 @@
   </PropertyGroup>
   <ItemGroup />
   <ItemGroup>
-    <Compile Include="RandomFileGenerator.ps1" />
+    <Compile Include="GenerateSeparatorFile.ps1" />
+    <Compile Include="RandomExcelFileGenerator.ps1" />
+    <Compile Include="RandomGUIDFileGenerator.ps1" />
     <Compile Include="RandomFileGenerator.psd1" />
     <Compile Include="RandomFileGenerator.psm1" />
     <Compile Include="RandomFileGenerator.tests.ps1" />

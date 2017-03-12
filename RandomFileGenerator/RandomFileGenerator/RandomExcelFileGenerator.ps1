@@ -1,80 +1,156 @@
-[cmdletbinding()]
+﻿[cmdletbinding()]
 param 
 (
     [Parameter(Mandatory=$true)][string]$DictionaryFile,
-	[Parameter(Mandatory=$true)][int]$WordCount,
+	[Parameter(Mandatory=$true)][int]$Columns,
+    [Parameter(Mandatory=$true)][int]$Rows,
 	[Parameter(Mandatory=$true)][int]$FileCount,
 	[Parameter(Mandatory=$true)][string]$DestinationFolder,
 	[Parameter(Mandatory=$true)][string]$FilePrefix,
-	[Parameter(Mandatory=$false)][string]$SeparatorWeightFile,
 	[Parameter(Mandatory=$false)][string]$PersonListFile,
 	[Parameter(Mandatory=$false)][string]$DatesFile,
-    [Parameter(Mandatory=$false)][string]$TemplateDOCXFile,
+    [Parameter(Mandatory=$false)][string]$TemplateXLSXFile,
     [Parameter(Mandatory=$false)][switch]$NoProgressBar
 )
 
 $MainProgressVector = 0
 
-# A function to generate the TXT Files
-function GenerateTXT
+function GenerateTXTforXLSX
 {
-	[cmdletbinding()]
-	param 
-	(
-		[Parameter(Mandatory=$true)][int]$WordCount
-	)
+    [cmdletbinding()]
+    param 
+    (
+	    [Parameter(Mandatory=$true)][int]$Columns,
+        [Parameter(Mandatory=$true)][int]$Rows,
+        [Parameter(Mandatory=$true)][string]$TempTXT
+    )
 
-    # Have a string to store our text
-    [string]$LongString = ''
+    # Set the progress bar.
+    If (!$NoProgressBar)
+    {
+        Write-Progress -Id 1 -Activity 'Generating text...' -PercentComplete 0
+    }
 
-	# We start with a GUID so that every file would be unique.
-	$GUID = ([guid]::NewGuid()).ToString()
-    $GUIDToDump = $GUID.Replace('-','_') + ' '
-    $LongString = $LongString + $GUIDToDump
+    # Making sure the TempTXT file does not exist
+    If (Test-Path $DestinationFolder -PathType Leaf)
+    {
+        Try
+        {
+            Remove-Item $TempTXT -Force -ErrorAction SilentlyContinue
+        }
+        Catch
+        {
+            Write-Host 'There was a Temp.txt file in the destination folder: ' -ForegroundColor Red -NoNewline
+            Write-Host $DestinationFolder -ForegroundColor Cyan
+            Write-Host 'The script tried to delete it, but the file is locked.' -ForegroundColor Red
+            Write-Host 'The script halted.' -ForegroundColor Yellow
+            Break
+        }
+    }
+    $FileStream = [System.IO.StreamWriter] $TempTXT
 
-	# Then we generate as many words as requested.
-	For($i=1; $i -le $WordCount; $i++)
-	{
+    # Construct table file
+    $GUID = ([guid]::NewGuid()).GUID
+    $FileStream.Write($GUID)
+    
+
+    For ($Column=1;$Column -le $Columns; $Column++)
+    {
+        $RandomWordLine = Get-Random -Minimum 1 -Maximum $DictionaryFileRows
+		$RandomWord = $DictionaryFileContent[$RandomWordLine]
+        $FileStream.Write("`t$RandomWord")
+    }
+
+    For($Row = 1; $Row -le $Rows; $Row++)
+    {
         If (!$NoProgressBar)
         {
-            Write-Progress -Id 1 -Activity 'Generating text...' -PercentComplete (($i/$WordCount)*100)
+            Write-Progress -Id 1 -Activity 'Generating text...' -PercentComplete (($Row/$Rows)*100)
         }
-		$RandomWordLine = Get-Random -Minimum 1 -Maximum $DictionaryFileRows
+        $FileStream.Write("`r`n") # New line
+        $RandomWordLine = Get-Random -Minimum 1 -Maximum $DictionaryFileRows
 		$RandomWord = $DictionaryFileContent[$RandomWordLine]
-        If ($Separators.Count -eq 1)
+        $fileStream.Write("$RandomWord`t") # Row first column
+        For ($Column=1;$Column -le $Columns; $Column++)
         {
-            $RandomSeparator = $Separators[0]
+            $NumberTXT = [string](Get-Random -Minimum 1 -Maximum 10000) + "`t"
+            $FileStream.Write($NumberTXT) # The actual numbers in the table
         }
-        Else
-        {
-            $RandomSeparator = $Separators[(Get-Random -Minimum 0 -Maximum $($Separators.Count))]
-        }
-        $RandomWord = $RandomWord + $RandomSeparator
-		$LongString = $LongString + $RandomWord
-	}
+    }
 
-    Return $LongString
-
+    $FileStream.Close()
 }
 
-# A function to generate docx from the TXT file
-function ConvertTXTToDocX
+function ConvertTXTtoXLSX
 {
-	[cmdletbinding()]
-	param
-	(
-		[Parameter(Mandatory=$true)][string]$DocxFile,
-        [Parameter(Mandatory=$true)][string]$StringToInsert
-	)
+    [cmdletbinding()]
+    param 
+    (
+        [Parameter(Mandatory=$true)][string]$TempTXT,
+        [Parameter(Mandatory=$true)][string]$ExcelFile
+    )
 
-	$WordSelection = $WordApplication.Selection
-    $WordSelection.Select()
-    $null = $WordSelection.Delete()
-	$WordSelection.InsertAfter($StringToInsert)
+    # IF we have a template file, we paste into that.
+    If ($TemplateXLSXFile)
+    {
+        # First, let's clear whatever there is in the file
+        $Cleared = $ExcelSheet.UsedRange.Clear()
+        # Then open the TXT file
+        Try
+        {
+            $TempDocument = $ExcelApplication.Workbooks.Open($TempTXT,$null,$true)
+            $TempSheet = ($TempDocument.Sheets)[1]
+        }
+        Catch
+        {
+            Write-Host 'Could not open the TXT file: ' -ForegroundColor Red -NoNewline
+            Write-Host $TempTXT -ForegroundColor Cyan
+        }
+        # Copy the used cells
+        $Copied = $TempSheet.UsedRange.Copy()
+        If (!$Copied)
+        {
+            Write-Host 'Could not copy the content of the ' -ForegroundColor Red -NoNewline
+            Write-Host $TempTXT -ForegroundColor Cyan -NoNewline
+            Write-Host ' file.'
+        }
 
-	$WordDocument.SaveAs([REF]"$DocxFile")
+        # Then paste it into our Sheet.
+        $Pasted = $ExcelSheet.Range("A1").PasteSpecial()
+        If (!$Pasted)
+        {
+            Write-Host 'Could not paste into the template file.' -ForegroundColor Red
+        }
+
+        # Save it as the Excel file
+        Try
+        {
+            $ExcelDocument.SaveAs($ExcelFile, [Microsoft.Office.Interop.Excel.XlFileFormat]::xlWorkbookDefault)
+        }
+        Catch
+        {
+            Write-Host 'Could not save the Excel file: ' -ForegroundColor Red -NoNewline
+            Write-Host $ExcelFile -ForegroundColor Cyan
+        }
+
+        # And finally close the template file and remove it.
+        $TempDocument.Close()
+        Remove-Item $TempTXT -Force -ErrorAction SilentlyContinue
+
+    }
+    #If not, then we just opent the TXT and save it as an XLS
+    Else
+    {
+        $ExcelWorkBook = $ExcelApplication.Workbooks.Open($TempTXT)
+        $ExcelWorkBook.SaveAs($ExcelFile, [Microsoft.Office.Interop.Excel.XlFileFormat]::xlWorkbookDefault)
+        $ExcelWorkBook.Saved = $true
+        $ExcelWorkBook.Close()
+        # And delete the Template TXT file as we do not need that anymore.
+        Remove-Item $TempTXT -Force -ErrorAction SilentlyContinue
+    }
 
 }
+
 
 # Loading and creating the model XML file
 Function EnsureCoreXML
@@ -112,7 +188,7 @@ Function EnsureCoreXML
 	{
 		# It doesn't exist, so we create one by exporting it from the word file.
 	    # First we create a copy of the DOCX file to a ZIP.
-	    $ZIPFilePath = $WordFilePath.Replace('docx','zip')
+	    $ZIPFilePath = $WordFilePath.Replace('xlsx','zip')
 	    Try
 	    {
 		    Copy-Item -Path $WordFilePath -Destination ($ZIPFilePath) -ErrorAction SilentlyContinue
@@ -154,6 +230,21 @@ Function EnsureCoreXML
             Break
         }
 
+        # Here's a little trick that we have to do, because the COM Object generated
+        # core.xml does not contain the creator property. If it does not, we have to
+        # add it for further use
+        If(!($Script:CoreXML.coreproperties.creator))
+        {
+            # So it seems it is not there, so we add it
+            $CreatorNameSpace = 'http://purl.org/dc/elements/1.1'
+            $CreatorElement = $Script:CoreXML.CreateElement('dc','creator',$CreatorNameSpace)
+            $null = $Script:CoreXML.DocumentElement.AppendChild($CreatorElement)
+            # We have to get rid of the namespace definition, otherwise it'll generate an error.
+            $CreatorNameSpaceToNull = ' xmlns:dc="' + $CreatorNameSpace + '"'
+            $Script:CoreXML = $Script:CoreXML.OuterXml.Replace($CreatorNameSpaceToNull,'')
+        }
+
+
         # And write it for later use
         Try
         {
@@ -185,12 +276,12 @@ Function UpdateDocXMLProps
 	[cmdletbinding()]
 	param
 	(
-		[Parameter(Mandatory=$true)][string]$WordFilePath
+		[Parameter(Mandatory=$true)][string]$XLSXFilePath
 	)
 
     If (!$Script:CoreXML)
 	{
-        EnsureCoreXML $WordFilePath
+        EnsureCoreXML $XLSXFilePath
     }
 
     # Check if we have a Persons List.
@@ -225,20 +316,22 @@ Function UpdateDocXMLProps
     # Now that we have the parameters set, we update the Word file with this XML
     Try
     {
-        $WordFile = [System.IO.Compression.ZipFile]::Open( $WordFilePath, 'Update' )
-        $ZippedCoreXMLFile = [System.IO.StreamWriter]($WordFile.Entries | Where-Object { $_.FullName -match 'docProps/core.xml' }).Open()
+        $ExcelFile = [System.IO.Compression.ZipFile]::Open( $XLSXFilePath, 'Update' )
+        $ZippedCoreXMLFile = [System.IO.StreamWriter]($ExcelFile.Entries | Where-Object { $_.FullName -match 'docProps/core.xml' }).Open()
         $ZippedCoreXMLFile.BaseStream.SetLength(0)
         $ZippedCoreXMLFile.Write($Script:CoreXML.OuterXml)
         $ZippedCoreXMLFile.Flush()
         $ZippedCoreXMLFile.Close()
-        $WordFile.Dispose()
+        $ExcelFile.Dispose()
     }
     Catch
     {
         Write-Host 'There was an error updating the core properties of: ' -ForegroundColor Red -NoNewline
-        Write-Host $WordFilePath -ForegroundColor Cyan
+        Write-Host $XLSXFilePath -ForegroundColor Cyan
     }
 }
+
+
 
 ####################################################
 # This is where the main part of the script starts #
@@ -247,16 +340,28 @@ $StartTime = Get-Date
 Cls
 
 # Loading the Word Interop assembly
+Write-Host 'Loading assemblies...'
 If (!$NoProgressBar)
 {
     Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Loading assemblies' -PercentComplete 0
 }
-# For operating with Word
-Add-Type -AssemblyName Microsoft.Office.Interop.Word
-# For operating ZIP files
-$null = [System.Reflection.Assembly]::LoadWithPartialName('System.IO.Compression.FileSystem')
+Try
+{
+    # For operating with Word
+    Add-Type -AssemblyName Microsoft.Office.Interop.Excel
+    # For operating ZIP files
+    $null = [System.Reflection.Assembly]::LoadWithPartialName('System.IO.Compression.FileSystem')
+    Write-Host '... Assemblies loaded.' -ForegroundColor Green
+}
+Catch
+{
+    Write-Host 'Could not load assemblies.' -ForegroundColor Red
+    Write-Host 'The script halted.' -ForegroundColor Yellow
+    Break
+}
 
 # Making sure the Destination folder is not having a training backslash
+Write-Host 'Ensuring destination folder.'
 If (!$NoProgressBar)
 {
     Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Ensuring destination folder' -PercentComplete 0
@@ -283,30 +388,54 @@ If (!((Test-Path $DestinationFolder -PathType Container) -and [System.IO.Path]::
 }
 Write-Host '... Folder confirmed.' -ForegroundColor Green
 
-# Checking if the Template Word file exist
+# Checking if the Template Excel file exist
+Write-Host 'Looking for template Excel file.'
 If (!$NoProgressBar)
 {
-    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Ensuring template Word file' -PercentComplete 0
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Looking for template Excel file' -PercentComplete 0
 }
-If($TemplateDOCXFile)
+If($TemplateXLSXFile)
 {
-    If (!((Test-Path $TemplateDOCXFile) -and ([System.IO.Path]::IsPathRooted($TemplateDOCXFile))))
+    <#
+    If ($TemplateXLSXFile)
     {
-        Write-Host 'The TemplateDOCXFile parameter was defined with the value: ' -ForegroundColor Red -NoNewline
-        Write-Host $TemplateDOCXFile -ForegroundColor Cyan -NoNewline
+        Write-Host '############' -ForegroundColor Red
+        Write-Host '# Warning! #' -ForegroundColor Red
+        Write-Host '############' -ForegroundColor Red
+        Write-Host 'The TemplateXLSXFile parameter is defined. The script is using the Windows Clipboard to paste information into the file.' -ForegroundColor Yellow
+        Write-Host 'If you use the computer while the files are being generated, ' -ForegroundColor Yellow
+        Write-Host 'you might end up with invalid information in your random ' -ForegroundColor Yellow
+        Write-Host 'Excel files. ' -ForegroundColor Yellow
+        Write-Host 'Do you want to continue? (y/n)'
+        $ShouldProceed = Read-Host -Prompt 'Do you want to proceed?'
+	    If (!($ShouldProceed -eq 'y') -or !($ShouldProceed -eq 'Y'))
+	    {
+		    Break
+        }
+    }
+    #>
+
+    If (!((Test-Path $TemplateXLSXFile) -and ([System.IO.Path]::IsPathRooted($TemplateXLSXFile))))
+    {
+        Write-Host 'The TemplateXLSXFile parameter was defined with the value: ' -ForegroundColor Red -NoNewline
+        Write-Host $TemplateXLSXFile -ForegroundColor Cyan -NoNewline
         Write-Host ' but could not be found, or is using relative path. Please try again.' -ForegroundColor Red
         Write-Host 'The script Halted.' -ForegroundColor Yellow
         Break
     }
+    Else
+    {
+        Write-Host '... The file is present.' -ForegroundColor Green
+    }
 }
 
 # Loading the dictionary file
+Write-Host 'Loading the dictionary file: ' -NoNewline
+Write-Host $DictionaryFile -ForegroundColor Cyan
 If (!$NoProgressBar)
 {
     Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Loading Dictionary File' -PercentComplete 0
 }
-Write-Host 'Loading the dictionary file: ' -NoNewline
-Write-Host $DictionaryFile -ForegroundColor Cyan
 If (Test-Path $DictionaryFile -ErrorAction SilentlyContinue)
 {
     Try
@@ -354,39 +483,9 @@ If($DictionaryFileRows -eq 1)
 	Break
 }
 
-# Trying to load the Separator Weight file
-If (!$NoProgressBar)
-{
-    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Preparing Separators' -PercentComplete 0
-}
-$Separators = @()
-If (($SeparatorWeightFile) -and (Test-Path $SeparatorWeightFile -ErrorAction SilentlyContinue))
-{
-    Write-Host 'Loading the dictionary file: ' -NoNewline
-    Write-Host $SeparatorWeightFile -ForegroundColor Cyan
-
-    Try
-    {
-	    $Separators = Get-Content $SeparatorWeightFile
-        Write-Host '... The file loaded.' -ForegroundColor Green
-        Write-Host
-    }
-    Catch
-    {
-        Write-Host 'Cannot access the specified separator weight file: ' -ForegroundColor Red -NoNewline
-        Write-Host $SeparatorWeightFile
-        Write-Host 'Please try again.'
-        Break
-    }
-}
-Else
-{
-	$Separators += ' '
-    Write-Host 'No separator weight file was specified. Words will be separated by space.' -ForegroundColor Gray
-    Write-Host
-}
-
 # Trying to load the PersonListFile
+Write-Host 'Looking for a person list file.' 
+$ProgressVector = 0
 If (!$NoProgressBar)
 {
     Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Preparing persons list' -PercentComplete 0
@@ -461,10 +560,12 @@ If($PersonListFile)
 }
 
 #Trying to load the DatesFile
+Write-Host 'Looking for a dates list file.'
 If (!$NoProgressBar)
 {
     Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Processing dates list' -PercentComplete 0
 }
+$ProgressVector = 0
 If($DatesFile)
 {
     If (!$NoProgressBar)
@@ -553,50 +654,63 @@ If($DatesFile)
     }
 }
 
-
 # Generating files
-#Open Word Application
+#Open Excel Application
 If (!$NoProgressBar)
 {
-    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation "Creating Word COM Object" -PercentComplete (($ProgressVector / ($FileCount*2))*100)
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation "Creating Excel COM Object" -PercentComplete 0
 }
-
-Write-Host 'Creating MS Word COM object...'
+Write-Host 'Creating MS Excel COM object...'
 Try
 {
-    $WordApplication = New-Object -ComObject "Word.Application"
+    $ExcelApplication = New-Object -ComObject "Excel.Application"
+    $ExcelApplication.DisplayAlerts = $false
     Write-Host '... Object created.' -ForegroundColor Green
 }
 Catch
 {
-    Write-Host 'Could not create Word COM Object.' -ForegroundColor Red
+    Write-Host 'Could not create Excel COM Object.' -ForegroundColor Red
     Write-Host 'The script halted.' -ForegroundColor Yellow
 }
 
-# Either create a new document or use the one in the template
-Write-Host 'Creating document...'
-If ($TemplateDOCXFile)
+# If available, use the one in the template
+If ($TemplateXLSXFile)
 {
-    $WordDocument = $WordApplication.Documents.Open($TemplateDOCXFile)
-}
-Else
-{
-    $WordDocument = $WordApplication.Documents.Add()
-}
-
-
-$ProgressVector = 0
-For($i=1; $i -le $FileCount;$i++)
-{
-    $ProgressVector++
-    If (!$NoProgressBar)
-    {
-        Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'TXT File Generation' -CurrentOperation "$i files generated..." -PercentComplete (($ProgressVector / ($FileCount*2))*100)
-    }
-
+    Write-Host 'Opening template document...'
     Try
     {
-	    $StringToDocx = GenerateTXT -WordCount $WordCount
+        $ExcelDocument = $ExcelApplication.Workbooks.Open($TemplateXLSXFile)
+        $ExcelSheet = ($ExcelDocument.Sheets)[1]
+        Write-Host '... Document opened.' -ForegroundColor Green
+    }
+    Catch
+    {
+        Write-Host 'Could not open the provided Template Excel document: ' -ForegroundColor -NoNewline
+        Write-Host $TemplateXLSXFile -ForegroundColor Cyan
+        Write-Host 'The script halted.' -ForegroundColor Yellow
+        Break
+    }
+}
+
+# Generate the files.
+Write-Host 'Generating XLS Files.'
+If (!$NoProgressBar)
+{
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'File generation' -CurrentOperation "Creating Excel files" -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
+}
+$TempTXT = $DestinationFolder + '\temp.txt'
+For($i=1; $i -le $FileCount;$i++)
+{
+    $MainProgressVector++
+    If (!$NoProgressBar)
+    {
+        Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'TXT File Generation' -CurrentOperation "$i files generated..." -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
+    }
+
+    # First we generate some text
+    Try
+    {
+	    GenerateTXTforXLSX -Columns $Columns -Rows $Rows -TempTXT $TempTXT
     }
     Catch
     {
@@ -604,75 +718,71 @@ For($i=1; $i -le $FileCount;$i++)
         Write-Host $i -ForegroundColor Cyan
     }
 
-    $destinationFile = "$DestinationFolder\$FilePrefix" + "_$i" + '.docx'
-
-    ConvertTXTToDocX -DocxFile $destinationFile -StringToInsert $StringToDocx
-
+    # Then we convert it
+    $ExcelFilePath = "$DestinationFolder\$FilePrefix" + "_$i" + ".xlsx"
+    ConvertTXTtoXLSX -TempTXT $TempTXT -ExcelFile $ExcelFilePath
 }
-Write-Host
-Write-Host '... Files created.' -ForegroundColor Green
-
-
-# Close Word Application and clean up.
-If (!$NoProgressBar)
-{
-    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Cleanup' -CurrentOperation '' -PercentComplete (($ProgressVector / ($FileCount*2))*100)
-}
-Write-Host 'Closing MS Word COM object...'
-Try
-{
-    $WordApplication.Quit() 
-    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($WordApplication)
-    $WordApplication = $null
-    [GC]::Collect()
-    [GC]::WaitForPendingFinalizers()
-}
-Catch
-{
-    Write-Host 'Could not close the MS Word COM object.' -ForegroundColor Red
-}
+Write-Host '... Finished generating files.' -ForegroundColor Green
 
 
 # Then we see if we need ot update the core properties
 If (!$NoProgressBar)
 {
-    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Updating core properties' -CurrentOperation '' -PercentComplete (($ProgressVector / ($FileCount*2))*100)
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Updating core properties' -CurrentOperation '' -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
 }
 If ($PersonListFile -or $DatesFile)
 {
     Write-Host
     Write-Host 'Updating document properties...'
-    $WordFiles = Get-ChildItem $DestinationFolder -File -Filter "*.docx"
-    ForEach($WordFile in $WordFiles)
+    $ExcelFiles = Get-ChildItem $DestinationFolder -File -Filter "*.xlsx"
+    ForEach($ExcelFile in $ExcelFiles)
     {
-        $ProgressVector++
-        Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Updating core properties' -CurrentOperation '' -PercentComplete (($ProgressVector / ($FileCount*2))*100)
-        $WordFilePath = $WordFile.FullName
-        UpdateDocXMLProps -WordFilePath $WordFilePath
+        $MainProgressVector++
+        Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Updating core properties' -CurrentOperation '' -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
+        $ExcelFilePath = $ExcelFile.FullName
+        UpdateDocXMLProps -XLSXFilePath $ExcelFilePath
     }
     Write-Host '...Done.' -ForegroundColor Green
 }
 
 
-# And finaly some cleanup, in case we used the CoreXML file
-If ($script:CoreXMLCreated)
+
+# Close Excel Application and clean up.
+Write-Host 'Cleaning up'
+If (!$NoProgressBar)
 {
-    Remove-Item -Path "$DestinationFolder\XML" -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Cleanup' -CurrentOperation '' -PercentComplete 100
+}
+Write-Host 'Closing MS Excel COM object...'
+Try
+{
+    $ExcelApplication.Workbooks.Close()
+    $ExcelApplication.Quit()
+    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($ExcelApplication)
+    $ExcelApplication = $null
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}
+Catch
+{
+    Write-Host 'Could not close the MS Excel COM object.' -ForegroundColor Red
 }
 
 $EndTime = Get-Date
 $TimeTaken = $EndTime - $StartTime
 
-Write-Host
-Write-Host 'The script finished.'
-Write-Host 'It took ' -NoNewline
-Write-Host $TimeTaken.Days -ForegroundColor Cyan -NoNewline
-Write-Host ' days, ' -NoNewline
-Write-Host $TimeTaken.Hours -ForegroundColor Cyan -NoNewline
-Write-Host ' hours, ' -NoNewline
-Write-Host $TimeTaken.Minutes -ForegroundColor Cyan -NoNewline
-Write-Host ' minutes, and ' -NoNewline
-Write-Host $TimeTaken.Seconds -ForegroundColor Cyan -NoNewline
-Write-Host ' seconds to create ' -NoNewline
-Write-Host $FileCount -ForegroundColor Cyan -NoNewline
-Write-Host ' file(s).'
+# Dump some statistics on the screen.
+Write-Host 'The script took ' -NoNewline
+Write-Host $TimeTaken.Days -ForegroundColor Green -NoNewline
+Write-Host ' days, ' -NoNewline 
+Write-Host $TimeTaken.Hours -ForegroundColor Green -NoNewline
+Write-Host " hours, " -NoNewline
+Write-Host $TimeTaken.Minutes -ForegroundColor Green -NoNewline
+Write-Host " minutes, " -NoNewline
+Write-Host $TimeTaken.Seconds -ForegroundColor Green -NoNewline
+Write-Host " seconds and " -NoNewline
+Write-Host $TimeTaken.Milliseconds -ForegroundColor Green -NoNewline
+Write-Host " milliseconds to run."
+Write-Host 'It created ' -NoNewline
+Write-Host $SumFiles -ForegroundColor Green -NoNewline 
+Write-Host ' files.' 
