@@ -38,6 +38,7 @@
     <Compile Include="RandomFileGenerator.psd1" />
     <Compile Include="RandomFileGenerator.psm1" />
     <Compile Include="RandomFileGenerator.tests.ps1" />
+    <Compile Include="RandomPowerPointFileGenerator.ps1" />
     <Compile Include="RandomWordFileGenerator.ps1" />
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />

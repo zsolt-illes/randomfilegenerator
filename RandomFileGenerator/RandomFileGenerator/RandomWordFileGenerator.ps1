@@ -13,8 +13,6 @@ param
     [Parameter(Mandatory=$false)][switch]$NoProgressBar
 )
 
-$MainProgressVector = 0
-
 # A function to generate the TXT Files
 function GenerateTXT
 {
@@ -243,6 +241,7 @@ Function UpdateDocXMLProps
 ####################################################
 # This is where the main part of the script starts #
 ####################################################
+$MainProgressVector = 0
 $StartTime = Get-Date
 Cls
 

@@ -396,7 +396,6 @@ If (!$NoProgressBar)
 }
 If($TemplateXLSXFile)
 {
-    <#
     If ($TemplateXLSXFile)
     {
         Write-Host '############' -ForegroundColor Red
@@ -413,7 +412,6 @@ If($TemplateXLSXFile)
 		    Break
         }
     }
-    #>
 
     If (!((Test-Path $TemplateXLSXFile) -and ([System.IO.Path]::IsPathRooted($TemplateXLSXFile))))
     {
