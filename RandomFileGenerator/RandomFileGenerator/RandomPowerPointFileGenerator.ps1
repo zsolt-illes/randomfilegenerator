@@ -14,6 +14,170 @@ param
     [Parameter(Mandatory=$false)][switch]$NoProgressBar
 )
 
+# Loading and creating the model XML file
+Function EnsureCoreXML
+{
+	[cmdletbinding()]
+	param
+	(
+		[Parameter(Mandatory=$true)][string]$PPTFilePath
+	)
+
+    $Script:CoreXMLCreated=$false
+	$CoreXMLPath = "$DestinationFolder\XML\core.xml"
+
+	# Fist test if we already have the core XML in the memory
+
+	# No, so we have to check if it exist already. If yes, we load it.
+	$CoreXMLExist = Test-Path $CoreXMLPath -ErrorAction SilentlyContinue
+	If ($CoreXMLExist)
+	{
+		# It does exist, so we try to load it.
+		Try
+		{
+			[xml]$Script:CoreXML = Get-Content $CoreXMLPath -ErrorAction SilentlyContinue
+		}
+		Catch
+		{
+			Write-Host 'A core.xml file exist on the ' -ForegroundColor Red -NoNewline
+			Write-Host $CoreXMLPath -ForegroundColor Cyan -NoNewline
+			Write-Host ' location, but it could not be read.' -ForegroundColor Red
+			Write-Host 'Cannot update the document properties.'
+			Break
+		}
+	}
+	Else
+	{
+		# It doesn't exist, so we create one by exporting it from the word file.
+	    # First we create a copy of the DOCX file to a ZIP.
+	    $ZIPFilePath = $PPTFilePath.Replace('pptx','zip')
+	    Try
+	    {
+		    Copy-Item -Path $PPTFilePath -Destination ($ZIPFilePath) -ErrorAction SilentlyContinue
+	    }
+	    Catch
+	    {
+		    Write-Host 'Could not copy the Word file: ' -ForegroundColor Red -NoNewline
+		    Write-Host $PPTFilePath -ForegroundColor Cyan -NoNewline
+		    Write-Host ' to ZIP file: ' -ForegroundColor Red -NoNewline
+		    Write-Host $($ZIPFilePath)
+		    Break
+	    }
+
+	    # Then unpack the core.xml
+	    Try
+	    {
+		    $zipfile = [System.IO.Compression.ZipFile]::Open( $ZIPFilePath, 'Read' )
+	    }
+	    Catch
+	    {
+		    Write-Host 'Cannot open the zip file: ' -ForegroundColor Red -NoNewline
+		    Write-Host $ZIPFilePath -ForegroundColor Cyan
+            Write-Host 'The script halted.' -ForegroundColor Yellow
+		    Break
+	    }
+            
+        # Extract the content of the core.xml file from the ZIP
+        Try
+        {
+            $ZippedCoreXMLFile = [System.IO.StreamReader]($zipfile.Entries | Where-Object { $_.FullName -match 'docProps/core.xml' }).Open()
+		    [xml]$Script:CoreXML = $ZippedCoreXMLFile.ReadToEnd()
+        }
+        Catch
+        {
+            Write-Host 'Could not extract the core.xml file from the ' -ForegroundColor Red -NoNewline
+            Write-Host $ZIPFilePath -ForegroundColor Cyan -NoNewline
+            Write-Host ' file.' -ForegroundColor Red
+            Write-Host 'The script halted.' -ForegroundColor Yellow
+            Break
+        }
+
+        # And write it for later use
+        Try
+        {
+            $null = mkdir "$DestinationFolder\XML\" -ErrorAction SilentlyContinue
+            $Script:CoreXML.Save($CoreXMLPath)
+            $Script:CoreXMLCreated = $true
+        }
+        Catch
+        {
+            Write-Host 'Could not create the ' -ForegroundColor Red -NoNewline
+            Write-Host "$DestinationFolder\XML\core.xml" -ForegroundColor Cyan -NoNewline
+            Write-Host ' file.' -ForegroundColor Red
+            Write-Host 'The script halted.' -ForegroundColor Yellow
+            Break
+        }
+
+        # And the cleanup
+        $ZippedCoreXMLFile.Close()
+        $ZippedCoreXMLFile.Dispose()
+        $zipfile.Dispose()
+
+        Remove-Item -Path $ZIPFilePath -Force -ErrorAction SilentlyContinue
+	}
+}
+
+# This is a function to update the creator and lastModifiedBy fields of the document
+Function UpdateDocXMLProps
+{
+	[cmdletbinding()]
+	param
+	(
+		[Parameter(Mandatory=$true)][string]$PPTFilePath
+	)
+
+    If (!$Script:CoreXML)
+	{
+        EnsureCoreXML $PPTFilePath
+    }
+
+    # Check if we have a Persons List.
+
+    If ($PersonListFile)
+    {
+        # We do, so we update the Creator field
+        $RandomPerson = Get-Random -Minimum 0 -Maximum $script:PersonCount
+        $RandomPerson = $PersonList[$RandomPerson]
+        $Script:CoreXML.coreProperties.creator = $RandomPerson.ToString()
+        # And the lastModifiedBy field
+        $RandomPerson = Get-Random -Minimum 0 -Maximum ($script:PersonCount-1)
+        $RandomPerson = $PersonList[$RandomPerson]
+        $Script:CoreXML.coreProperties.lastModifiedBy = $RandomPerson.ToString()
+    }
+
+    # Check if we have a Dates List.
+    If ($DatesList)
+    {
+        # We do, so we update the Created field
+        $RandomDateNr = Get-Random -Minimum 0 -Maximum $DatesCount
+        $RandomDate = $DatesList[$RandomDateNr]
+        $Script:CoreXML.coreProperties.created.'#text' = $RandomDate.ToString()
+        # And the Modified field
+        # Here we need a trick, as we have to make sure the last modifed
+        # date is not earlier than the date creation. (This is why we ordered the list.)
+        $RandomDateNr = Get-Random -Minimum $RandomDateNr -Maximum $DatesCount
+        $RandomDate = $DatesList[$RandomDateNr]
+        $Script:CoreXML.coreProperties.modified.'#text' = $RandomDate.ToString()
+    }
+
+    # Now that we have the parameters set, we update the Word file with this XML
+    Try
+    {
+        $PPTFile = [System.IO.Compression.ZipFile]::Open( $PPTFilePath, 'Update' )
+        $ZippedCoreXMLFile = [System.IO.StreamWriter]($PPTFile.Entries | Where-Object { $_.FullName -match 'docProps/core.xml' }).Open()
+        $ZippedCoreXMLFile.BaseStream.SetLength(0)
+        $ZippedCoreXMLFile.Write($Script:CoreXML.OuterXml)
+        $ZippedCoreXMLFile.Flush()
+        $ZippedCoreXMLFile.Close()
+        $PPTFile.Dispose()
+    }
+    Catch
+    {
+        Write-Host 'There was an error updating the core properties of: ' -ForegroundColor Red -NoNewline
+        Write-Host $PPTFilePath -ForegroundColor Cyan
+    }
+}
+
 ####################################################
 # This is where the main part of the script starts #
 ####################################################
@@ -323,7 +487,7 @@ If($DatesFile)
 # Parsing the picture directory
 If (!$NoProgressBar)
 {
-    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Processing pictures directory' -PercentComplete 0
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation 'Processing pictures directory' -PercentComplete $MainProgressVector
 }
 $NonPictureFiles = 0
 If ($PicturesFolder)
@@ -396,7 +560,7 @@ If ($PicturesFolder)
 #Open PowerPoint Application
 If (!$NoProgressBar)
 {
-    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation "Creating PowerPoint COM Object" -PercentComplete (($ProgressVector / ($FileCount*2))*100)
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Preparation' -CurrentOperation "Creating PowerPoint COM Object" -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
 }
 
 Write-Host 'Creating MS PowerPoint COM object...'
@@ -428,9 +592,11 @@ Else
     #$PPTDocument = $PPTApplication.Presentations.Add() # Use this if you want to see the PPT App
     $PPTSlideLayout = [microsoft.office.interop.powerpoint.ppSlideLayout]::ppLayoutText
 }
+Write-Host '... Done.' -ForegroundColor Green
 
 
 # Generating files.
+Write-Host
 Write-Host 'Generating files...' -NoNewline
 
 # Creating the Animations array:
@@ -440,10 +606,10 @@ $TextAnimationEffects = 257, 258, 513, 769, 770, 1025, 1026, 1281, 1282, 1283, 1
 For($FileCounter=1; $FileCounter -le $FileCount; $FileCounter++)
 {
     Write-Host '.' -NoNewline
-    $ProgressVector++
+    $MainProgressVector++
     If (!$NoProgressBar)
     {
-        Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Creating PowerPoint files' -CurrentOperation "Creating file: $FileCounter" -PercentComplete (($ProgressVector / ($FileCount*2))*100)
+        Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Creating PowerPoint files' -CurrentOperation "Creating file: $FileCounter" -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
     }
     # Let's clear the existing slides. (On first iteration it is obsolete, but doesn't hurt.)
     If ($PPTDocument.Slides.Count -gt 0)
@@ -475,6 +641,7 @@ For($FileCounter=1; $FileCounter -le $FileCount; $FileCounter++)
         $slide.Shapes.Title.AnimationSettings.TextLevelEffect = 1
         $RandomAnimation = ($TextAnimationEffects | Get-Random)
         $slide.Shapes.Title.AnimationSettings.EntryEffect = $RandomAnimation
+        $slide.Shapes.Title.AnimationSettings.AdvanceMode = 2
         $slide.Shapes.Title.AnimationSettings.Animate = $msoTrue
 
         # Add the rest of the text
@@ -490,6 +657,7 @@ For($FileCounter=1; $FileCounter -le $FileCount; $FileCounter++)
         $slide.Shapes.Item(2).AnimationSettings.TextLevelEffect = 1
         $RandomAnimation = ($TextAnimationEffects | Get-Random)
         $slide.Shapes.Item(2).AnimationSettings.EntryEffect = $RandomAnimation
+        $slide.Shapes.Item(2).AnimationSettings.AdvanceMode = 2
         $slide.Shapes.Item(2).AnimationSettings.Animate = $msoTrue
 
 
@@ -519,28 +687,61 @@ For($FileCounter=1; $FileCounter -le $FileCount; $FileCounter++)
     # And finally clear the slides to make sure we can create a new set of them.
     $PPTDocument.slides | %{$_.Delete()}
 }
-
+Write-Host
+Write-Host '... Files created.' -ForegroundColor Green
 
 # Close the PowerPoint application
-[gc]::collect()
-[gc]::WaitForPendingFinalizers()
-[gc]::collect()
-[gc]::WaitForPendingFinalizers()
-$PPTDocument.Saved = $msoTrue
-$PPTDocument.Close()
-$null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($PPTDocument)
-$PPTDocument = $null
-[gc]::collect()
-[gc]::WaitForPendingFinalizers()
-[gc]::collect()
-[gc]::WaitForPendingFinalizers()
-$PPTApplication.quit()
-$null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($PPTApplication)
-$PPTApplication = $null
-[gc]::collect()
-[gc]::WaitForPendingFinalizers()
-[gc]::collect()
-[gc]::WaitForPendingFinalizers()
+If (!$NoProgressBar)
+{
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Cleanup' -CurrentOperation '' -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
+}
+Write-Host 'Closing MS PowerPoint COM object...'
+Try
+{
+    [gc]::collect()
+    [gc]::WaitForPendingFinalizers()
+    [gc]::collect()
+    [gc]::WaitForPendingFinalizers()
+    $PPTDocument.Saved = $msoTrue
+    $PPTDocument.Close()
+    $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($PPTDocument)
+    $PPTDocument = $null
+    [gc]::collect()
+    [gc]::WaitForPendingFinalizers()
+    [gc]::collect()
+    [gc]::WaitForPendingFinalizers()
+    $PPTApplication.quit()
+    $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($PPTApplication)
+    $PPTApplication = $null
+    [gc]::collect()
+    [gc]::WaitForPendingFinalizers()
+    [gc]::collect()
+    [gc]::WaitForPendingFinalizers()
+}
+Catch
+{
+    Write-Host 'Could not close the MS PowerPoint COM object.' -ForegroundColor Red
+}
+
+# Then we see if we need ot update the core properties
+If (!$NoProgressBar)
+{
+    Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Updating core properties' -CurrentOperation '' -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
+}
+If ($PersonListFile -or $DatesFile)
+{
+    Write-Host
+    Write-Host 'Updating document properties...'
+    $PPTFiles = Get-ChildItem $DestinationFolder -File -Filter "*.pptx"
+    ForEach($PPTFile in $PPTFiles)
+    {
+        $ProgressVector++
+        Write-Progress -Id 0 -Activity "Generating $FileCount files" -Status 'Updating core properties' -CurrentOperation '' -PercentComplete (($MainProgressVector / ($FileCount*2))*100)
+        $PPTFilePath = $PPTFile.FullName
+        UpdateDocXMLProps -PPTFilePath $PPTFilePath
+    }
+    Write-Host '...Done.' -ForegroundColor Green
+}
 
 
 
